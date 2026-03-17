@@ -143,28 +143,37 @@ const fetchPhotos = async () => {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [])
 
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
+useEffect(() => {
+  const el = containerRef.current;
+  if (!el) return;
 
-    let direction = 1
+  const cols = Math.max(1, Math.floor(window.innerWidth / (PHOTO_WIDTH + GAP_X)));
+  const visibleRows = Math.max(1, Math.floor(window.innerHeight / (PHOTO_HEIGHT + GAP_Y)));
+  const visibleCapacity = cols * visibleRows;
 
-    const interval = setInterval(() => {
-      if (!el) return
+  // Do not start scrolling until the wall is filled enough
+  if (photos.length <= visibleCapacity * 1.2) {
+    el.scrollTop = 0;
+    return;
+  }
 
-      if (el.scrollHeight <= el.clientHeight) return
+  let direction = 1;
 
-      el.scrollTop += direction * 0.5
+  const interval = setInterval(() => {
+    if (!el) return;
+    if (el.scrollHeight <= el.clientHeight) return;
 
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1) {
-        direction = -1
-      } else if (el.scrollTop <= 0) {
-        direction = 1
-      }
-    }, 30)
+    el.scrollTop += direction * 0.5;
 
-    return () => clearInterval(interval)
-  }, [photos.length])
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1) {
+      direction = -1;
+    } else if (el.scrollTop <= 0) {
+      direction = 1;
+    }
+  }, 30);
+
+  return () => clearInterval(interval);
+}, [photos.length]);
 
   const cols = Math.max(
     1,
