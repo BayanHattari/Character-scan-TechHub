@@ -8,8 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "predeploy": "npm run build"
+    "preview": "vite preview"
+
   },
   "dependencies": {
     "ogl": "^1.0.11",

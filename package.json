@@ -1,10 +1,6 @@
 {
   "name": "characterscan",
-
-  "homepage": "https://DanyahBa.github.io/TechHub_CharacterScan/",
-
-  "homepage": "https://DanyahBa.github.io/character-scan/",
-
+  "homepage": "https://BayanHattari.github.io/Character-scan-TechHub",
   "private": true,
   "version": "0.0.0",
   "type": "module",
