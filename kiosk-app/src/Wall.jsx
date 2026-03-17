@@ -26,15 +26,23 @@ const fetchPhotos = async () => {
     const data = await response.json()
 
     const cols = Math.max(1, Math.floor(window.innerWidth / (PHOTO_WIDTH + GAP_X)))
+    const visibleRows = Math.max(
+      1,
+      Math.floor(window.innerHeight / (PHOTO_HEIGHT + GAP_Y))
+    )
+    const visibleCapacity = cols * visibleRows
 
-    // More slots than photos to create a scattered mosaic feel
-    const rows = Math.max(1, Math.ceil((data.length * 1.2) / cols))
+    // Keep everything inside the first screen until it is actually full
+    const totalRows =
+      data.length <= visibleCapacity
+        ? visibleRows
+        : Math.max(visibleRows, Math.ceil((data.length * 1.2) / cols))
 
     const gridWidth = cols * (PHOTO_WIDTH + GAP_X) - GAP_X
     const offsetX = Math.max(0, (window.innerWidth - gridWidth) / 2)
 
     const slots = []
-    for (let row = 0; row < rows; row++) {
+    for (let row = 0; row < totalRows; row++) {
       for (let col = 0; col < cols; col++) {
         slots.push({
           left: offsetX + col * (PHOTO_WIDTH + GAP_X),
@@ -43,18 +51,31 @@ const fetchPhotos = async () => {
       }
     }
 
-    const layoutKey = `${cols}-${window.innerWidth}`
+    const layoutKey = `${cols}-${visibleRows}-${window.innerWidth}-${window.innerHeight}`
 
     if (layoutKeyRef.current !== layoutKey) {
       layoutKeyRef.current = layoutKey
 
-      const indices = [...Array(slots.length).keys()]
-      for (let i = indices.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1))
-        ;[indices[i], indices[j]] = [indices[j], indices[i]]
+      const allIndices = [...Array(slots.length).keys()]
+      const firstScreenIndices = allIndices.slice(0, visibleCapacity)
+      const extraIndices = allIndices.slice(visibleCapacity)
+
+      // shuffle helper
+      const shuffle = (arr) => {
+        const copy = [...arr]
+        for (let i = copy.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          ;[copy[i], copy[j]] = [copy[j], copy[i]]
+        }
+        return copy
       }
 
-      slotOrderRef.current = indices
+      // Fill visible area first, then use lower rows
+      slotOrderRef.current = [
+        ...shuffle(firstScreenIndices),
+        ...shuffle(extraIndices),
+      ]
+
       positionsRef.current = {}
     }
 
@@ -147,18 +168,11 @@ useEffect(() => {
   const el = containerRef.current
   if (!el) return
 
-  const visibleRows = Math.max(
-    1,
-    Math.floor(window.innerHeight / (PHOTO_HEIGHT + GAP_Y))
-  )
+  const maxPhotoBottom = photos.length
+    ? Math.max(...photos.map((photo) => photo.top + PHOTO_HEIGHT))
+    : 0
 
-  const usedRows = photos.map((photo) =>
-    Math.floor(photo.top / (PHOTO_HEIGHT + GAP_Y))
-  )
-
-  const maxUsedRow = usedRows.length ? Math.max(...usedRows) : 0
-
-  if (maxUsedRow < visibleRows) {
+  if (maxPhotoBottom <= el.clientHeight - 10) {
     el.scrollTop = 0
     return
   }
@@ -188,9 +202,9 @@ const cols = Math.max(
 
 const maxPhotoBottom = photos.length
   ? Math.max(...photos.map((photo) => photo.top + PHOTO_HEIGHT))
-  : window.innerHeight
+  : 0
 
-const wallHeight = maxPhotoBottom + GAP_Y + 120
+const wallHeight = Math.max(window.innerHeight, maxPhotoBottom + GAP_Y + 40)
 
   return (
     <div
