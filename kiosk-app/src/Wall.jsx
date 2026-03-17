@@ -28,7 +28,7 @@ const fetchPhotos = async () => {
     const cols = Math.max(1, Math.floor(window.innerWidth / (PHOTO_WIDTH + GAP_X)))
 
     // More slots than photos to create a scattered mosaic feel
-    const rows = Math.max(1, Math.ceil((data.length * 1.4) / cols))
+    const rows = Math.max(1, Math.ceil((data.length * 1.2) / cols))
 
     const gridWidth = cols * (PHOTO_WIDTH + GAP_X) - GAP_X
     const offsetX = Math.max(0, (window.innerWidth - gridWidth) / 2)
@@ -144,36 +144,42 @@ const fetchPhotos = async () => {
   }, [])
 
 useEffect(() => {
-  const el = containerRef.current;
-  if (!el) return;
+  const el = containerRef.current
+  if (!el) return
 
-  const cols = Math.max(1, Math.floor(window.innerWidth / (PHOTO_WIDTH + GAP_X)));
-  const visibleRows = Math.max(1, Math.floor(window.innerHeight / (PHOTO_HEIGHT + GAP_Y)));
-  const visibleCapacity = cols * visibleRows;
+  const visibleRows = Math.max(
+    1,
+    Math.floor(window.innerHeight / (PHOTO_HEIGHT + GAP_Y))
+  )
 
-  // Do not start scrolling until the wall is filled enough
-  if (photos.length <= visibleCapacity * 1.2) {
-    el.scrollTop = 0;
-    return;
+  const usedRows = photos.map((photo) =>
+    Math.floor(photo.top / (PHOTO_HEIGHT + GAP_Y))
+  )
+
+  const maxUsedRow = usedRows.length ? Math.max(...usedRows) : 0
+
+  if (maxUsedRow < visibleRows) {
+    el.scrollTop = 0
+    return
   }
 
-  let direction = 1;
+  let direction = 1
 
   const interval = setInterval(() => {
-    if (!el) return;
-    if (el.scrollHeight <= el.clientHeight) return;
+    if (!el) return
+    if (el.scrollHeight <= el.clientHeight) return
 
-    el.scrollTop += direction * 0.5;
+    el.scrollTop += direction * 0.5
 
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1) {
-      direction = -1;
+      direction = -1
     } else if (el.scrollTop <= 0) {
-      direction = 1;
+      direction = 1
     }
-  }, 30);
+  }, 30)
 
-  return () => clearInterval(interval);
-}, [photos.length]);
+  return () => clearInterval(interval)
+}, [photos])
 
 const cols = Math.max(
   1,
@@ -183,7 +189,8 @@ const cols = Math.max(
 const maxPhotoBottom = photos.length
   ? Math.max(...photos.map((photo) => photo.top + PHOTO_HEIGHT))
   : window.innerHeight
-const wallHeight = maxPhotoBottom + 150
+
+const wallHeight = maxPhotoBottom + GAP_Y + 120
 
   return (
     <div
