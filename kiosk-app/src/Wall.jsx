@@ -183,8 +183,8 @@ const cols = Math.max(
 const maxPhotoBottom = photos.length
   ? Math.max(...photos.map((photo) => photo.top + PHOTO_HEIGHT))
   : window.innerHeight
+const wallHeight = maxPhotoBottom + 150
 
-const wallHeight = maxPhotoBottom + GAP_Y + 40
   return (
     <div
       ref={containerRef}
