@@ -1,0 +1,84 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(-45deg, #000000, #3D5AB3, #1a1a1a, #3D5AB3);
+  background-size: 400% 400%;
+  animation: blueGradientAnimation 15s ease infinite;
+  overflow: hidden;
+}
+
+@keyframes blueGradientAnimation {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.wall-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.wall-container::-webkit-scrollbar {
+  display: none;
+}
+
+.wall-container {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.photo-grid {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  z-index: 1;
+}
+
+.visitor-photo {
+  position: absolute;
+  width: 180px;
+  height: 110px;
+  object-fit: contain;
+  object-position: center;
+  opacity: 0.9;
+  border-radius: 10px;
+  animation: fadeIn 1s ease-in forwards;
+  margin: 0;
+  background: transparent;
+ /* border: 2px solid #3D5AB3;
+box-shadow: 0 0 10px rgba(61,90,179,0.8);*/
+}
+
+.logo-overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 75%;
+  max-width: 1200px;
+  z-index: 5;
+  opacity: 0.28;
+  pointer-events: none;
+  filter: none;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 0.9; }
+}
