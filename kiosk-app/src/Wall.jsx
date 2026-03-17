@@ -175,16 +175,16 @@ useEffect(() => {
   return () => clearInterval(interval);
 }, [photos.length]);
 
-  const cols = Math.max(
-    1,
-    Math.floor(window.innerWidth / (PHOTO_WIDTH + GAP_X))
-  )
+const cols = Math.max(
+  1,
+  Math.floor(window.innerWidth / (PHOTO_WIDTH + GAP_X))
+)
 
-  const gridWidth = cols * (PHOTO_WIDTH + GAP_X) - GAP_X
-const offsetX = Math.max(0, (window.innerWidth - gridWidth) / 2)
-  const rows = Math.max(1, Math.ceil((photos.length * 1.4) / cols))
-const wallHeight = rows * (PHOTO_HEIGHT + GAP_Y) - GAP_Y
+const maxPhotoBottom = photos.length
+  ? Math.max(...photos.map((photo) => photo.top + PHOTO_HEIGHT))
+  : window.innerHeight
 
+const wallHeight = maxPhotoBottom + GAP_Y + 40
   return (
     <div
       ref={containerRef}
