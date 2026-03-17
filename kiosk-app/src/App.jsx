@@ -1,15 +1,15 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import KioskApp from "./KioskApp";
+
 import Wall from "./Wall";
+import { HashRouter, Routes, Route } from "react-router-dom";
 
 function App() {
   return (
-    <BrowserRouter basename="/character-scan">
+    <HashRouter basename="/character-scan">
       <Routes>
         <Route path="/" element={<KioskApp />} />
         <Route path="/wall" element={<Wall />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
