@@ -53,12 +53,7 @@ body {
 
 .visitor-photo {
   position: absolute;
-<<<<<<< HEAD
-  width: 100%;
-  height: 100%;
-=======
->>>>>>> f34725e764e24c04fd61d5c70b953656ff76ccbe
-  object-fit: cover;
+  object-fit: contain;
   opacity: 1;
   border-radius: 10px;
   background: #000;
