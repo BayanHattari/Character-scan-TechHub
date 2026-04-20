@@ -56,11 +56,7 @@ const handleCapture = async () => {
     const formData = new FormData()
     formData.append("file", imageBlob, "capture.png")
 
-<<<<<<< HEAD
     const response = await fetch("https://character-scan.onrender.com/upload", {
-=======
-    const response = await fetch("https://memorial-wall-backend.onrender.com/upload", {
->>>>>>> f34725e764e24c04fd61d5c70b953656ff76ccbe
       method: "POST",
       body: formData,
     })
