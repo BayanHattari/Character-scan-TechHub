@@ -35,7 +35,11 @@ function Wall() {
   const allPagesRef = useRef([])
   const totalPagesRef = useRef(1)
 
+<<<<<<< HEAD
   const API_URL = 'https://character-scan.onrender.com/photos'
+=======
+  const API_URL = 'https://memorial-wall-backend.onrender.com/photos'
+>>>>>>> f34725e764e24c04fd61d5c70b953656ff76ccbe
 
 const SLOT_WIDTH = 180
 const SLOT_HEIGHT = 110
@@ -207,6 +211,7 @@ useEffect(() => {
   localStorage.setItem('wallPhotoWidth', String(photoWidth))
   localStorage.setItem('wallPhotoHeight', String(photoHeight))
 }, [photoWidth, photoHeight])
+<<<<<<< HEAD
 useEffect(() => {
   const eventSource = new EventSource("https://character-scan.onrender.com/events")
 
@@ -222,6 +227,8 @@ useEffect(() => {
     eventSource.close()
   }
 }, [fetchPhotos])
+=======
+>>>>>>> f34725e764e24c04fd61d5c70b953656ff76ccbe
 
 
 
