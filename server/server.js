@@ -93,7 +93,11 @@ function makeThumbnailUrl(publicId) {
   return cloudinary.url(publicId, {
     secure: true,
     transformation: [
+<<<<<<< HEAD
       { width: 250, height: 250, crop: "fill", gravity: "auto" },
+=======
+      { width: 250, height: 250, crop: "fill" },
+>>>>>>> f34725e764e24c04fd61d5c70b953656ff76ccbe
       { fetch_format: "auto", quality: "auto" },
     ],
   });
