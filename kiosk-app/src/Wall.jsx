@@ -35,7 +35,8 @@ function Wall() {
   const allPagesRef = useRef([])
   const totalPagesRef = useRef(1)
 
-  const API_URL = 'https://character-scan.onrender.com/photos'
+  const API_BASE = 'https://character-scan.onrender.com'
+  const API_URL = `${API_BASE}/photos`
 
 const SLOT_WIDTH = 180
 const SLOT_HEIGHT = 110
@@ -143,7 +144,7 @@ const fetchPhotos = useCallback(async () => {
 
   const deletePhoto = async (id) => {
     try {
-      const response = await fetch(`${API_URL}/${id}`, {
+      const response = await fetch(`${API_BASE}/photos/${id}`, {
         method: 'DELETE',
         headers: {
           'x-admin-key': 'TechHub-Admin-2026',
