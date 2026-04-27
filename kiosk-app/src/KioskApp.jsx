@@ -56,7 +56,7 @@ const handleCapture = async () => {
     const formData = new FormData()
     formData.append("file", imageBlob, "capture.png")
 
-    const response = await fetch("https://character-scan.onrender.com/upload", {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE}/upload`, {
       method: "POST",
       body: formData,
     })
