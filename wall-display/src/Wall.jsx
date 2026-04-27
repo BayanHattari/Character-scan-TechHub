@@ -2,8 +2,31 @@ import React, { useState, useEffect,useRef } from 'react';
 
 import './Wall.css';
 
+// Discrete photo widths (in px). Picking the largest size that still fits
+// every photo on screen keeps changes infrequent and avoids constant reshuffles
+// from one-off count changes.
+const PHOTO_WIDTHS = [600, 400, 300, 200, 180, 160, 140, 120, 100, 85, 72]
+const PHOTO_ASPECT = 4 / 3 // height / width
+const GAP = 7
+
+function computeLayout(count) {
+  for (const w of PHOTO_WIDTHS) {
+    const h = Math.round(w * PHOTO_ASPECT)
+    const cols = Math.max(1, Math.floor(window.innerWidth / (w + GAP)))
+    const rows = Math.max(1, Math.floor(window.innerHeight / (h + GAP)))
+    if (cols * rows >= count) return { w, h, cols, rows }
+  }
+  const w = PHOTO_WIDTHS[PHOTO_WIDTHS.length - 1]
+  const h = Math.round(w * PHOTO_ASPECT)
+  const cols = Math.max(1, Math.floor(window.innerWidth / (w + GAP)))
+  const rows = Math.max(1, Math.floor(window.innerHeight / (h + GAP)))
+  return { w, h, cols, rows }
+}
+
 function Wall() {
   const [photos, setPhotos] = useState([]);
+  const [photoSize, setPhotoSize] = useState({ w: 120, h: 160 });
+  const photoSizeRef = useRef({ w: 120, h: 160 });
   const positionsRef = useRef({})
   const [adminMode, setAdminMode] = useState(false)
   const containerRef = useRef(null)
@@ -19,23 +42,27 @@ const fetchPhotos = async () => {
     if (response.ok) {
       const data = await response.json()
 
-      const photoWidth = 120
-      const photoHeight = 160
-      const gapX = 7
-      const gapY = 7
+      const layout = computeLayout(Math.max(1, data.length))
+      const photoWidth = layout.w
+      const photoHeight = layout.h
+      const cols = layout.cols
+      const rows = layout.rows
 
-      const cols = Math.max(1, Math.floor(window.innerWidth / (photoWidth + gapX)))
-      const rows = Math.max(1, Math.floor(window.innerHeight / (photoHeight + gapY)))
+      if (photoWidth !== photoSizeRef.current.w) {
+        photoSizeRef.current = { w: photoWidth, h: photoHeight }
+        positionsRef.current = {}
+        setPhotoSize({ w: photoWidth, h: photoHeight })
+      }
+
+      const offsetX = Math.max(0, (window.innerWidth - cols * (photoWidth + GAP) + GAP) / 2)
+      const offsetY = Math.max(0, (window.innerHeight - rows * (photoHeight + GAP) + GAP) / 2)
 
       const slots = []
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
-          const baseLeft = col * (photoWidth + gapX)
-          const baseTop = row * (photoHeight + gapY)
-
           slots.push({
-            left: baseLeft ,
-            top: baseTop ,
+            left: offsetX + col * (photoWidth + GAP),
+            top: offsetY + row * (photoHeight + GAP),
           })
         }
       }
@@ -141,6 +168,8 @@ const deletePhoto = async (id) => {
   style={{
     left: `${photo.left}px`,
     top: `${photo.top}px`,
+    width: `${photoSize.w}px`,
+    height: `${photoSize.h}px`,
   }}
   onDoubleClick={() => {
   if (adminMode) deletePhoto(photo.id)

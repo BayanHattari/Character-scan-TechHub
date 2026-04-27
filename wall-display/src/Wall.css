@@ -44,12 +44,11 @@ body {
 /* Individual photo styling with 3:4 aspect ratio */
 .visitor-photo {
   position: absolute;
-  width: 120px;
-  height: 160px;
   object-fit: contain;
   opacity: 0.85;
   border-radius: 4px;
   animation: fadeIn 1s ease-in forwards;
+  transition: width 0.4s ease, height 0.4s ease, left 0.4s ease, top 0.4s ease;
 }
 
 /* Centered logo overlay with high visibility and glow effect */
@@ -60,7 +59,7 @@ body {
   transform: translate(-50%, -50%);
   width: 75%;
   max-width: 1200px;
-  z-index: 5;
+  z-index: -1;
   opacity: 0.28;
   pointer-events: none;
   filter: none;
