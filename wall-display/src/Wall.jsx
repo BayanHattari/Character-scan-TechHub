@@ -8,7 +8,7 @@ function Wall() {
   const [adminMode, setAdminMode] = useState(false)
   const containerRef = useRef(null)
   // Backend server endpoint provided by the team
-  const API_URL = "https://memorial-wall-backend.onrender.com/photos"; 
+  const API_URL = `${import.meta.env.VITE_API_BASE}/photos`;
 
   // Function to fetch visitor photos from the server
 const fetchPhotos = async () => {
@@ -75,7 +75,7 @@ const fetchPhotos = async () => {
 };
 const deletePhoto = async (id) => {
   try {
-    const response = await fetch(`https://memorial-wall-backend.onrender.com/photos/${id}`, {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE}/photos/${id}`, {
       method: "DELETE",
       headers: {
         "x-admin-key": "TechHub-Admin-2026"
@@ -101,7 +101,7 @@ const deletePhoto = async (id) => {
   useEffect(() => {
     fetchPhotos();
     // Auto-refresh the wall every 5 seconds to load new visitors
-    const interval = setInterval(fetchPhotos, 500); 
+    const interval = setInterval(fetchPhotos, 5000); 
     return () => clearInterval(interval);
   }, []);
   useEffect(() => {
