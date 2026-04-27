@@ -72,6 +72,9 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
   const locked        = useRef(false)
   const colorLocked   = useRef(false)
   const peaceF        = useRef(0)
+  const openF         = useRef(0)
+  const lastPinchEnd  = useRef(0)
+  const prevAction    = useRef('hover')
   const lastClick     = useRef(0)
   const lastLock      = useRef(0)
   const lastRaw       = useRef({ x: 0, y: 0 })
@@ -248,14 +251,18 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
             const peace = ext(8,5) && ext(12,9) && fold(16,13) && fold(20,17)
                         && pinch > 0.08 && d(lm[8], lm[12]) > 0.04
             peaceF.current = peace ? peaceF.current + 1 : 0
+            openF.current  = (fDist > 0.3) ? openF.current + 1 : 0
             if      (pinch < 0.04)          action = 'pinch'
             else if (peaceF.current > 5)    action = 'peace'
-            else if (fDist > 0.3)           action = 'open'
+            else if (openF.current  > 6)    action = 'open'
           }
         })
       }
 
       const now = Date.now()
+      if (prevAction.current === 'pinch' && action !== 'pinch') lastPinchEnd.current = now
+      if (action === 'open' && now - lastPinchEnd.current < 600) action = 'hover'
+      prevAction.current = action
       if (action !== 'open')  wasErasing.current  = false
       if (action !== 'pinch') colorLocked.current = false
 
@@ -385,11 +392,26 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
               backgroundColor:'transparent', borderColor:'red', borderWidth:'4px' })
           } else {
             let erased = false
-            const newLines = lines.current.filter(line => {
-              const hit = line.points.some(p => Math.hypot(p.x - bx, p.y - by) < ERASE_R)
-              if (hit) erased = true
-              return !hit
-            })
+            const newLines = []
+            for (const line of lines.current) {
+              let segment = []
+              let cut = false
+              for (const p of line.points) {
+                if (Math.hypot(p.x - bx, p.y - by) < ERASE_R) {
+                  cut = true
+                  if (segment.length > 1) newLines.push({ points: segment, color: line.color, size: line.size })
+                  segment = []
+                } else {
+                  segment.push(p)
+                }
+              }
+              if (cut) {
+                erased = true
+                if (segment.length > 1) newLines.push({ points: segment, color: line.color, size: line.size })
+              } else {
+                newLines.push(line)
+              }
+            }
             if (erased) {
               if (!wasErasing.current) {
                 undoStack.current.push(JSON.parse(JSON.stringify(lines.current)))
