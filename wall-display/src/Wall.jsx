@@ -1,4 +1,4 @@
-import React, { useState, useEffect,useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 import './Wall.css';
 
@@ -7,13 +7,14 @@ function Wall() {
   const positionsRef = useRef({})
   const [adminMode, setAdminMode] = useState(false)
   const containerRef = useRef(null)
-  // Backend server endpoint provided by the team
-  const API_URL = "https://memorial-wall-backend.onrender.com/photos"; 
+  // Backend server endpoint
+  const API_BASE = "https://character-scan.onrender.com";
+  const API_URL = `${API_BASE}/photos`;
 
   // Function to fetch visitor photos from the server
-const fetchPhotos = async () => {
+const fetchPhotos = useCallback(async () => {
   try {
-    const response = await fetch(`${API_URL}?t=${Date.now()}`, {
+    const response = await fetch(API_URL, {
   cache: "no-store",
 });
     if (response.ok) {
@@ -72,10 +73,11 @@ const fetchPhotos = async () => {
   } catch (error) {
     console.error("Error fetching photos:", error)
   }
-};
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 const deletePhoto = async (id) => {
   try {
-    const response = await fetch(`https://memorial-wall-backend.onrender.com/photos/${id}`, {
+    const response = await fetch(`${API_BASE}/photos/${id}`, {
       method: "DELETE",
       headers: {
         "x-admin-key": "TechHub-Admin-2026"
@@ -100,10 +102,27 @@ const deletePhoto = async (id) => {
 
   useEffect(() => {
     fetchPhotos();
-    // Auto-refresh the wall every 5 seconds to load new visitors
-    const interval = setInterval(fetchPhotos, 500); 
+    // Refresh every 30s as fallback; SSE handles real-time updates
+    const interval = setInterval(fetchPhotos, 30000); 
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchPhotos]);
+
+  // SSE for real-time updates from server
+  useEffect(() => {
+    const eventSource = new EventSource(`${API_BASE}/events`);
+
+    eventSource.onmessage = () => {
+      fetchPhotos();
+    };
+
+    eventSource.onerror = (error) => {
+      console.error("SSE error:", error);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [fetchPhotos]);
   useEffect(() => {
   const handleResize = () => {
     positionsRef.current = {};
@@ -135,7 +154,7 @@ const deletePhoto = async (id) => {
   {photos.map((photo) => (
 <img
   key={photo.id}
-  src={`${photo.url}?v=${photo.createdAt || photo.id || Date.now()}`}
+  src={photo.url}
   className="visitor-photo"
   alt="Visitor"
   style={{

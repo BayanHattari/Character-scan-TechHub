@@ -10,14 +10,33 @@ const cloudinary = require("cloudinary").v2;
 const { Pool } = require("pg");
 
 const app = express();
-app.use(cors());
+
+// CORS — restrict to known origins; add your GitHub Pages / Render URLs here
+const ALLOWED_ORIGINS = [
+  "https://bayanhattari.github.io",
+  "https://character-scan.onrender.com",
+  "http://localhost:5173",
+  "http://localhost:5174",
+];
+app.use(
+  cors({
+    origin(origin, cb) {
+      // Allow requests with no origin (e.g. curl, server-side) or matching origins
+      if (!origin || ALLOWED_ORIGINS.some((o) => origin.startsWith(o))) return cb(null, true);
+      cb(new Error("Not allowed by CORS"));
+    },
+  })
+);
 app.use(express.json());
 
 // ---------------------------
 // Settings (.env / Render Env Vars)
 // ---------------------------
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const ADMIN_KEY = process.env.ADMIN_KEY || "12345";
+const ADMIN_KEY = process.env.ADMIN_KEY;
+if (!ADMIN_KEY) {
+  console.warn("WARNING: ADMIN_KEY is not set. Admin delete endpoint will reject all requests.");
+}
 const MAX_PHOTOS = parseInt(process.env.MAX_PHOTOS || "10000", 10);
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -93,11 +112,7 @@ function makeThumbnailUrl(publicId) {
   return cloudinary.url(publicId, {
     secure: true,
     transformation: [
-<<<<<<< HEAD
       { width: 250, height: 250, crop: "fill", gravity: "auto" },
-=======
-      { width: 250, height: 250, crop: "fill" },
->>>>>>> f34725e764e24c04fd61d5c70b953656ff76ccbe
       { fetch_format: "auto", quality: "auto" },
     ],
   });
@@ -124,7 +139,7 @@ async function enforceMaxPhotos() {
   for (const pid of publicIds) {
     try {
       await cloudinary.uploader.destroy(pid);
-    } catch {}
+    } catch { }
   }
 
   // Delete from DB
@@ -134,6 +149,15 @@ async function enforceMaxPhotos() {
 // ---------------------------
 // Routes
 // ---------------------------
+
+/*
+  GET /ping — lightweight health check; hit this with an external cron
+  (e.g. UptimeRobot every 10 min) to prevent Render cold-starts.
+*/
+app.get("/ping", (req, res) => {
+  res.json({ ok: true, ts: Date.now() });
+});
+
 app.get("/", (req, res) => {
   res.send("Backend is running");
 });
@@ -221,7 +245,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     );
 
     // keep DB size under control
-    enforceMaxPhotos().catch(() => {});
+    enforceMaxPhotos().catch(() => { });
 
     const photo = { id, url, thumbnailUrl, createdAt };
 
@@ -253,7 +277,7 @@ app.delete("/photos/:id", async (req, res) => {
     // delete from Cloudinary 
     try {
       await cloudinary.uploader.destroy(publicId);
-    } catch {}
+    } catch { }
 
     // delete from DB
     await pool.query(`DELETE FROM photos WHERE id = $1`, [id]);
@@ -265,6 +289,14 @@ app.delete("/photos/:id", async (req, res) => {
     return res.status(500).json({ message: "Delete failed", error: err.message });
   }
 });
+
+// ---------------------------
+// SSE Heartbeat — prevents university/corporate proxies from dropping
+// the EventSource connection due to silence (typical proxy timeout: 60–90 s).
+// ---------------------------
+setInterval(() => {
+  sseSend({ type: "ping" });
+}, 25000);
 
 // ---------------------------
 // Start
@@ -279,10 +311,3 @@ initDb()
     console.error("Failed to init DB:", err.message);
     process.exit(1);
   });
-  app.delete("/photos/:id", async (req, res) => {
-  const { id } = req.params;
-
-  await db.query("DELETE FROM photos WHERE id = $1", [id]);
-
-  res.json({ success: true });
-});
