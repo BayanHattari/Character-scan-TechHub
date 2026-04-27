@@ -1,73 +1,64 @@
-// Memorial Wall Backend 
+// Memorial Wall Backend — local-only (LAN)
+// Photos saved to disk, metadata in SQLite. No third-party services.
 
 require("dotenv").config();
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
+const sharp = require("sharp");
+const Database = require("better-sqlite3");
 const { v4: uuidv4 } = require("uuid");
-const cloudinary = require("cloudinary").v2;
-const { Pool } = require("pg");
+
+const HOST = process.env.HOST || "0.0.0.0";
+const PORT = parseInt(process.env.PORT || "3000", 10);
+const ADMIN_KEY = process.env.ADMIN_KEY || "TechHub-Admin-2026";
+const MAX_PHOTOS = parseInt(process.env.MAX_PHOTOS || "10000", 10);
+const PHOTOS_DIR = path.resolve(process.env.PHOTOS_DIR || path.join(__dirname, "photos"));
+const THUMBS_DIR = path.join(PHOTOS_DIR, "thumbs");
+const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, "data", "photos.db"));
+
+fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+fs.mkdirSync(THUMBS_DIR, { recursive: true });
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+
+const db = new Database(DB_PATH);
+db.pragma("journal_mode = WAL");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS photos (
+    id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    thumb_filename TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_photos_created_at ON photos(created_at DESC);
+`);
+
+const insertPhoto = db.prepare(
+  `INSERT INTO photos (id, filename, thumb_filename, created_at) VALUES (?, ?, ?, ?)`
+);
+const selectPhotos = db.prepare(
+  `SELECT id, filename, thumb_filename AS thumbFilename, created_at AS createdAt
+   FROM photos ORDER BY created_at DESC LIMIT ?`
+);
+const selectPhotoById = db.prepare(`SELECT * FROM photos WHERE id = ?`);
+const deletePhotoById = db.prepare(`DELETE FROM photos WHERE id = ?`);
+const selectOldestBeyond = db.prepare(
+  `SELECT id, filename, thumb_filename AS thumbFilename
+   FROM photos ORDER BY created_at DESC LIMIT -1 OFFSET ?`
+);
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---------------------------
-// Settings (.env / Render Env Vars)
-// ---------------------------
-const PORT = parseInt(process.env.PORT || "3000", 10);
-const ADMIN_KEY = process.env.ADMIN_KEY || "12345";
-const MAX_PHOTOS = parseInt(process.env.MAX_PHOTOS || "10000", 10);
-
-const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) {
-  console.error("Missing DATABASE_URL. Add it to your local .env or deployment environment variables.");
-  process.exit(1);
-}
-
-// ---------------------------
-// Cloudinary config
-// ---------------------------
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// ---------------------------
-// Postgres setup
-// ---------------------------
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  // Render Postgres commonly requires SSL; this setting is safe on Render
-  ssl: { rejectUnauthorized: false },
-});
-
-async function initDb() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS photos (
-      id TEXT PRIMARY KEY,
-      public_id TEXT NOT NULL,
-      url TEXT NOT NULL,
-      thumbnail_url TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL
-    );
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_photos_created_at
-    ON photos (created_at DESC);
-  `);
-}
-
-// ---------------------------
-// Multer (memory storage)  
-// ---------------------------
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (req, file, cb) => {
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
     const allowed = ["image/jpeg", "image/png", "image/webp"];
     if (!allowed.includes(file.mimetype)) {
       return cb(new Error("Only images (jpeg/png/webp) are allowed"));
@@ -76,71 +67,39 @@ const upload = multer({
   },
 });
 
-// ---------------------------
-// SSE (Server-Sent Events) for live wall updates
-// ---------------------------
 const sseClients = new Set();
-
 function sseSend(data) {
   const payload = `data: ${JSON.stringify(data)}\n\n`;
   for (const res of sseClients) res.write(payload);
 }
 
-// ---------------------------
-// Helpers
-// ---------------------------
-function makeThumbnailUrl(publicId) {
-  return cloudinary.url(publicId, {
-    secure: true,
-    transformation: [
-<<<<<<< HEAD
-      { width: 250, height: 250, crop: "fill", gravity: "auto" },
-=======
-      { width: 250, height: 250, crop: "fill" },
->>>>>>> f34725e764e24c04fd61d5c70b953656ff76ccbe
-      { fetch_format: "auto", quality: "auto" },
-    ],
-  });
+function baseUrl(req) {
+  return `${req.protocol}://${req.get("host")}`;
+}
+function toPhotoDto(req, row) {
+  return {
+    id: row.id,
+    url: `${baseUrl(req)}/photos/${row.filename}`,
+    thumbnailUrl: `${baseUrl(req)}/photos/thumbs/${row.thumbFilename}`,
+    createdAt: row.createdAt,
+  };
 }
 
-async function enforceMaxPhotos() {
-  // Delete anything beyond MAX_PHOTOS (oldest ones)
-  const extra = await pool.query(
-    `
-    SELECT id, public_id
-    FROM photos
-    ORDER BY created_at DESC
-    OFFSET $1
-    `,
-    [MAX_PHOTOS]
-  );
+function safeUnlink(p) {
+  fs.promises.unlink(p).catch(() => {});
+}
 
-  if (!extra.rows || extra.rows.length === 0) return;
-
-  const ids = extra.rows.map((r) => r.id);
-  const publicIds = extra.rows.map((r) => r.public_id);
-
-  // Best-effort delete from Cloudinary
-  for (const pid of publicIds) {
-    try {
-      await cloudinary.uploader.destroy(pid);
-    } catch {}
+function enforceMaxPhotos() {
+  const extras = selectOldestBeyond.all(MAX_PHOTOS);
+  for (const row of extras) {
+    safeUnlink(path.join(PHOTOS_DIR, row.filename));
+    safeUnlink(path.join(THUMBS_DIR, row.thumbFilename));
+    deletePhotoById.run(row.id);
   }
-
-  // Delete from DB
-  await pool.query(`DELETE FROM photos WHERE id = ANY($1::text[])`, [ids]);
 }
 
-// ---------------------------
-// Routes
-// ---------------------------
-app.get("/", (req, res) => {
-  res.send("Backend is running");
-});
+app.get("/", (_req, res) => res.send("Backend is running"));
 
-/*
-  GET /events (SSE)
-*/
 app.get("/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -150,139 +109,88 @@ app.get("/events", (req, res) => {
   sseClients.add(res);
   res.write(`data: ${JSON.stringify({ type: "hello" })}\n\n`);
 
-  req.on("close", () => {
-    sseClients.delete(res);
-  });
+  req.on("close", () => sseClients.delete(res));
 });
 
-/*
-  GET /photos?limit=800
-*/
-app.get("/photos", async (req, res) => {
+app.get("/photos", (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit || "800", 10), 2000);
-
-    const result = await pool.query(
-      `
-      SELECT id,
-             url,
-             thumbnail_url AS "thumbnailUrl",
-             created_at AS "createdAt"
-      FROM photos
-      ORDER BY created_at DESC
-      LIMIT $1
-      `,
-      [limit]
-    );
-
-    return res.json(result.rows);
+    const rows = selectPhotos.all(limit);
+    res.json(rows.map((r) => toPhotoDto(req, r)));
   } catch (err) {
-    return res.status(500).json({ message: "DB error", error: err.message });
+    res.status(500).json({ message: "DB error", error: err.message });
   }
 });
 
-/*
-  POST /upload (field name must be "file")
-*/
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
     const id = uuidv4();
     const createdAt = new Date().toISOString();
-    const folder = "memorial_wall";
+    const filename = `${id}.png`;
+    const thumbFilename = `${id}.jpg`;
 
-    const uploadResult = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        {
-          folder,
-          public_id: id, // stable id
-          resource_type: "image",
-          overwrite: true,
-        },
-        (error, result) => {
-          if (error) return reject(error);
-          resolve(result);
-        }
-      );
-      stream.end(req.file.buffer);
-    });
+    const fullPath = path.join(PHOTOS_DIR, filename);
+    const thumbPath = path.join(THUMBS_DIR, thumbFilename);
 
-    const publicId = uploadResult.public_id;
-    const url = uploadResult.secure_url;
-    const thumbnailUrl = makeThumbnailUrl(publicId);
+    await sharp(req.file.buffer).png().toFile(fullPath);
+    await sharp(req.file.buffer)
+      .resize(250, 250, { fit: "cover", position: "attention" })
+      .jpeg({ quality: 80 })
+      .toFile(thumbPath);
 
-    await pool.query(
-      `
-      INSERT INTO photos (id, public_id, url, thumbnail_url, created_at)
-      VALUES ($1, $2, $3, $4, $5)
-      `,
-      [id, publicId, url, thumbnailUrl, createdAt]
-    );
+    insertPhoto.run(id, filename, thumbFilename, createdAt);
 
-    // keep DB size under control
-    enforceMaxPhotos().catch(() => {});
+    try { enforceMaxPhotos(); } catch {}
 
-    const photo = { id, url, thumbnailUrl, createdAt };
-
-    // live update for wall
+    const photo = toPhotoDto(req, { id, filename, thumbFilename, createdAt });
     sseSend({ type: "photo_uploaded", photo });
-
-    return res.json({ message: "Uploaded successfully", photo });
+    res.json({ message: "Uploaded successfully", photo });
   } catch (err) {
-    return res.status(500).json({ message: "Upload failed", error: err.message });
+    res.status(500).json({ message: "Upload failed", error: err.message });
   }
 });
 
-/*
-  DELETE /photos/:id (Admin only)
-  Header: x-admin-key: <ADMIN_KEY>
-*/
-app.delete("/photos/:id", async (req, res) => {
+app.delete("/photos/:id", (req, res) => {
   try {
-    const key = req.headers["x-admin-key"];
-    if (key !== ADMIN_KEY) return res.status(403).json({ message: "Forbidden (Admin only)" });
+    if (req.headers["x-admin-key"] !== ADMIN_KEY) {
+      return res.status(403).json({ message: "Forbidden (Admin only)" });
+    }
+    const row = selectPhotoById.get(req.params.id);
+    if (!row) return res.status(404).json({ message: "Photo not found" });
 
-    const { id } = req.params;
+    safeUnlink(path.join(PHOTOS_DIR, row.filename));
+    safeUnlink(path.join(THUMBS_DIR, row.thumb_filename));
+    deletePhotoById.run(row.id);
 
-    const row = await pool.query(`SELECT public_id FROM photos WHERE id = $1`, [id]);
-    if (!row.rows || row.rows.length === 0) return res.status(404).json({ message: "Photo not found" });
-
-    const publicId = row.rows[0].public_id;
-
-    // delete from Cloudinary 
-    try {
-      await cloudinary.uploader.destroy(publicId);
-    } catch {}
-
-    // delete from DB
-    await pool.query(`DELETE FROM photos WHERE id = $1`, [id]);
-
-    sseSend({ type: "photo_deleted", id });
-
-    return res.json({ message: "Photo deleted successfully", id });
+    sseSend({ type: "photo_deleted", id: row.id });
+    res.json({ message: "Photo deleted successfully", id: row.id });
   } catch (err) {
-    return res.status(500).json({ message: "Delete failed", error: err.message });
+    res.status(500).json({ message: "Delete failed", error: err.message });
   }
 });
 
-// ---------------------------
-// Start
-// ---------------------------
-initDb()
-  .then(() => {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on 0.0.0.0:${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Failed to init DB:", err.message);
-    process.exit(1);
-  });
-  app.delete("/photos/:id", async (req, res) => {
-  const { id } = req.params;
+// Static must come AFTER the JSON routes so /photos and /photos/:id hit the API.
+app.use("/photos", express.static(PHOTOS_DIR, { fallthrough: false, maxAge: "1y" }));
 
-  await db.query("DELETE FROM photos WHERE id = $1", [id]);
+function lanAddresses() {
+  const out = [];
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name] || []) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        out.push(`http://${iface.address}:${PORT}`);
+      }
+    }
+  }
+  return out;
+}
 
-  res.json({ success: true });
+app.listen(PORT, HOST, () => {
+  console.log(`Memorial Wall server listening on ${HOST}:${PORT}`);
+  console.log(`  local:   http://localhost:${PORT}`);
+  for (const addr of lanAddresses()) console.log(`  LAN:     ${addr}`);
+  console.log(`  photos:  ${PHOTOS_DIR}`);
+  console.log(`  db:      ${DB_PATH}`);
 });
