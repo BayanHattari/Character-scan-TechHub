@@ -106,7 +106,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
 
         ctx.drawImage(dc, 0, 0)
 
-        tmp.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8)
+        tmp.toBlob((blob) => resolve(blob), 'image/png')
       }),
 
     resetSession: () => {
@@ -507,7 +507,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         const vDevs = devs.filter(d => d.kind === 'videoinput')
         const camo  = vDevs.find(d => d.label.toLowerCase().includes('camo'))
          stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 },
+          video: { width: 1920, height: 1080,
             deviceId: camo ? { exact: camo.deviceId } : undefined }
         })
       video.srcObject = stream;

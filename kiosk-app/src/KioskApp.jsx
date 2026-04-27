@@ -53,43 +53,20 @@ const handleCapture = async () => {
     setPhotoTaken(true)
     setScreen("success")
 
-    // Upload with 30s timeout + 1 automatic retry
-    const uploadWithTimeout = async (attempt = 1) => {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 30000)
+    const formData = new FormData()
+    formData.append("file", imageBlob, "capture.png")
 
-      try {
-        const formData = new FormData()
-        formData.append("file", imageBlob, "capture.png")
+    const response = await fetch("https://character-scan.onrender.com/upload", {
+      method: "POST",
+      body: formData,
+    })
 
-        const response = await fetch("https://character-scan.onrender.com/upload", {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Upload failed (status ${response.status})`)
-        }
-      } catch (error) {
-        if (attempt < 2) {
-          console.warn(`Upload attempt ${attempt} failed, retrying...`, error.message)
-          return uploadWithTimeout(attempt + 1)
-        }
-        throw error
-      } finally {
-        clearTimeout(timeout)
-      }
+    if (!response.ok) {
+      throw new Error("Upload failed")
     }
-
-    await uploadWithTimeout()
   } catch (error) {
     console.error("Upload error:", error)
-    if (error.name === 'AbortError') {
-      alert("Upload timed out. Your artwork was saved locally but could not be sent to the wall.")
-    } else {
-      alert("Image was captured, but upload to server failed. It may appear on the wall shortly.")
-    }
+    alert("Image was captured, but upload to server failed.")
   } finally {
     setIsUploading(false)
   }
@@ -140,6 +117,16 @@ useEffect(() => {
 }, [screen]);
 
 
+
+
+
+const handleUserActivity = () => {
+  clearTimeout(inactivityTimerRef.current);
+
+  inactivityTimerRef.current = setTimeout(() => {
+    setScreen("home");
+  }, 60000);
+};
 
 
   return (
@@ -232,12 +219,7 @@ useEffect(() => {
           <FacePaintCanvas
   ref={canvasRef}
   onCapture={handleCapture}
-  onUserActivity={() => {
-    clearTimeout(inactivityTimerRef.current);
-    inactivityTimerRef.current = setTimeout(() => {
-      setScreen("home");
-    }, 60000);
-  }}
+  onUserActivity={handleUserActivity}
 />
 
           <div className="camera-controls" style={{ 
