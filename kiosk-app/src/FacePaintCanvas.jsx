@@ -84,6 +84,8 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
   const ancTilt       = useRef(0)
   const fx            = useRef(new OneEuroFilter(1.0, 0.03))
   const fy            = useRef(new OneEuroFilter(1.0, 0.03))
+  const lastGood      = useRef({ x: 0, y: 0, t: 0 })
+  const holdCount     = useRef(0)
 
   useImperativeHandle(ref, () => ({
     exportImage: () =>
@@ -277,11 +279,28 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
       }
 
       if (rightFound && rawX !== null) {
-        const vx = rawX - lastRaw.current.x
-        const vy = rawY - lastRaw.current.y
-        const sx = fx.current.filter(rawX + vx * PREDICT, now)
-        const sy = fy.current.filter(rawY + vy * PREDICT, now)
-        lastRaw.current = { x: rawX, y: rawY }
+        // Reject brief MediaPipe landmark mislabels. Real hand sweeps stay
+        // under MAX_SPEED; a finger-id swap blows past it for ~100–200 ms.
+        const MAX_SPEED = 6000  // px/s
+        const MAX_HOLD  = 12    // frames (~200 ms) before we give up and accept
+        const dt = (now - lastGood.current.t) / 1000 || 0.016
+        const dist = Math.hypot(rawX - lastGood.current.x, rawY - lastGood.current.y)
+        const isFirst = lastGood.current.t === 0
+        let gx, gy
+        if (isFirst || dist < MAX_SPEED * dt || holdCount.current >= MAX_HOLD) {
+          gx = rawX; gy = rawY
+          lastGood.current = { x: rawX, y: rawY, t: now }
+          holdCount.current = 0
+        } else {
+          gx = lastGood.current.x; gy = lastGood.current.y
+          holdCount.current++
+        }
+
+        const vx = gx - lastRaw.current.x
+        const vy = gy - lastRaw.current.y
+        const sx = fx.current.filter(gx + vx * PREDICT, now)
+        const sy = fy.current.filter(gy + vy * PREDICT, now)
+        lastRaw.current = { x: gx, y: gy }
 
         let bx = sx, by = sy
         if (locked.current) {
@@ -375,7 +394,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
               curPts.current.push(np)
             } else {
               const last = curPts.current[curPts.current.length - 1]
-              if (Math.hypot(np.x - last.x, np.y - last.y) > 3) curPts.current.push(np)
+              if (Math.hypot(np.x - last.x, np.y - last.y) > 5) curPts.current.push(np)
             }
             hideCursor()
           }
@@ -476,23 +495,34 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
       }
       drawCtx.lineCap = 'round'; drawCtx.lineJoin = 'round'
 
+      const strokePath = (pts) => {
+        if (pts.length < 2) return
+        drawCtx.beginPath()
+        drawCtx.moveTo(pts[0].x, pts[0].y)
+        if (pts.length === 2) {
+          drawCtx.lineTo(pts[1].x, pts[1].y)
+        } else {
+          for (let i = 1; i < pts.length - 1; i++) {
+            const mx = (pts[i].x + pts[i + 1].x) / 2
+            const my = (pts[i].y + pts[i + 1].y) / 2
+            drawCtx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my)
+          }
+          const last = pts[pts.length - 1]
+          drawCtx.lineTo(last.x, last.y)
+        }
+        drawCtx.stroke()
+      }
+
       lines.current.forEach(line => {
-        if (line.points.length < 2) return
         drawCtx.strokeStyle = line.color
         drawCtx.lineWidth   = line.size || 6
-        drawCtx.beginPath()
-        drawCtx.moveTo(line.points[0].x, line.points[0].y)
-        line.points.forEach((p, i) => { if (i) drawCtx.lineTo(p.x, p.y) })
-        drawCtx.stroke()
+        strokePath(line.points)
       })
 
       if (curPts.current.length > 1) {
         drawCtx.strokeStyle = color.current
         drawCtx.lineWidth   = bSize.current
-        drawCtx.beginPath()
-        drawCtx.moveTo(curPts.current[0].x, curPts.current[0].y)
-        curPts.current.forEach((p, i) => { if (i) drawCtx.lineTo(p.x, p.y) })
-        drawCtx.stroke()
+        strokePath(curPts.current)
       }
       drawCtx.restore()
     }
