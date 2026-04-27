@@ -35,7 +35,7 @@ function Wall() {
   const allPagesRef = useRef([])
   const totalPagesRef = useRef(1)
 
-  const API_URL = 'https://character-scan.onrender.com/photos'
+  const API_URL = `${import.meta.env.VITE_API_BASE}/photos`
 
 const SLOT_WIDTH = 180
 const SLOT_HEIGHT = 110
@@ -208,7 +208,7 @@ useEffect(() => {
   localStorage.setItem('wallPhotoHeight', String(photoHeight))
 }, [photoWidth, photoHeight])
 useEffect(() => {
-  const eventSource = new EventSource("https://character-scan.onrender.com/events")
+  const eventSource = new EventSource(`${import.meta.env.VITE_API_BASE}/events`)
 
   eventSource.onmessage = () => {
     fetchPhotos()
