@@ -49,6 +49,186 @@ const CW_R = 80
 const PREDICT = 0.65
 const ERASE_R = 30
 
+const STREAMLINE_K        = 0.3
+const TAPER_MIN           = 0.35
+const RDP_EPS_LIVE        = 2
+const RDP_EPS_CAPTURE     = 4
+const SHAPE_CIRCLE_THRESH = 0.9
+const SHAPE_LINE_THRESH   = 0.02
+const SHAPE_RADIUS_CV     = 0.18
+const SHAPE_MIN_POINTS    = 8
+const SHAPE_MIN_LENGTH    = 80
+
+function rdp(points, eps) {
+  if (points.length < 3) return points.slice()
+  const eps2 = eps * eps
+  const keep = new Uint8Array(points.length)
+  keep[0] = 1
+  keep[points.length - 1] = 1
+  const stack = [[0, points.length - 1]]
+  while (stack.length) {
+    const [a, b] = stack.pop()
+    const ax = points[a].x, ay = points[a].y
+    const bx = points[b].x, by = points[b].y
+    const dx = bx - ax, dy = by - ay
+    const len2 = dx * dx + dy * dy
+    let maxD2 = 0, maxI = -1
+    for (let i = a + 1; i < b; i++) {
+      const px = points[i].x - ax, py = points[i].y - ay
+      const cross = px * dy - py * dx
+      const d2 = len2 > 0 ? (cross * cross) / len2 : px * px + py * py
+      if (d2 > maxD2) { maxD2 = d2; maxI = i }
+    }
+    if (maxI !== -1 && maxD2 > eps2) {
+      keep[maxI] = 1
+      stack.push([a, maxI], [maxI, b])
+    }
+  }
+  const out = []
+  for (let i = 0; i < points.length; i++) if (keep[i]) out.push(points[i])
+  return out
+}
+
+function strokeBounds(pts) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y
+  }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY }
+}
+
+function strokeLength(pts) {
+  let L = 0
+  for (let i = 1; i < pts.length; i++) {
+    L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+  }
+  return L
+}
+
+function detectCircle(pts) {
+  if (pts.length < SHAPE_MIN_POINTS) return null
+  const b = strokeBounds(pts)
+  const diag = Math.hypot(b.w, b.h)
+  if (diag < SHAPE_MIN_LENGTH) return null
+  const start = pts[0], end = pts[pts.length - 1]
+  const closure = Math.hypot(start.x - end.x, start.y - end.y)
+  if (closure > diag * 0.35) return null
+  let cx = 0, cy = 0
+  for (const p of pts) { cx += p.x; cy += p.y }
+  cx /= pts.length; cy /= pts.length
+  let meanR = 0
+  const radii = new Array(pts.length)
+  for (let i = 0; i < pts.length; i++) {
+    const r = Math.hypot(pts[i].x - cx, pts[i].y - cy)
+    radii[i] = r
+    meanR += r
+  }
+  meanR /= pts.length
+  if (meanR < 20) return null
+  let varR = 0
+  for (const r of radii) varR += (r - meanR) * (r - meanR)
+  varR /= pts.length
+  const cv = Math.sqrt(varR) / meanR
+  if (cv > SHAPE_RADIUS_CV) return null
+  const L = strokeLength(pts)
+  const A = Math.PI * meanR * meanR
+  const iso = (4 * Math.PI * A) / (L * L)
+  if (iso < SHAPE_CIRCLE_THRESH) return null
+  return { cx, cy, r: meanR }
+}
+
+function detectLine(pts) {
+  if (pts.length < 4) return null
+  const start = pts[0], end = pts[pts.length - 1]
+  const chord = Math.hypot(end.x - start.x, end.y - start.y)
+  if (chord < SHAPE_MIN_LENGTH) return null
+  let n = 0, sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0
+  for (const p of pts) {
+    n++; sumX += p.x; sumY += p.y
+    sumXY += p.x * p.y; sumX2 += p.x * p.x; sumY2 += p.y * p.y
+  }
+  const mx = sumX / n, my = sumY / n
+  const sxx = sumX2 - n * mx * mx
+  const syy = sumY2 - n * my * my
+  const sxy = sumXY - n * mx * my
+  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy)
+  const nx = -Math.sin(theta), ny = Math.cos(theta)
+  const tx = Math.cos(theta), ty = Math.sin(theta)
+  let rms = 0, tMin = Infinity, tMax = -Infinity
+  for (const p of pts) {
+    const dx = p.x - mx, dy = p.y - my
+    const perp = dx * nx + dy * ny
+    rms += perp * perp
+    const along = dx * tx + dy * ty
+    if (along < tMin) tMin = along
+    if (along > tMax) tMax = along
+  }
+  rms = Math.sqrt(rms / n)
+  const length = tMax - tMin
+  if (length < SHAPE_MIN_LENGTH) return null
+  if (rms / length > SHAPE_LINE_THRESH) return null
+  return {
+    ax: mx + tMin * tx, ay: my + tMin * ty,
+    bx: mx + tMax * tx, by: my + tMax * ty,
+  }
+}
+
+function rasterizeCircle(cx, cy, r, n = 48) {
+  const out = []
+  for (let i = 0; i <= n; i++) {
+    const a = (i / n) * Math.PI * 2
+    out.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r })
+  }
+  return out
+}
+
+function polishStroke(pts, eps) {
+  const simplified = rdp(pts, eps)
+  if (simplified.length < 3) return simplified
+  const circle = detectCircle(simplified)
+  if (circle) return rasterizeCircle(circle.cx, circle.cy, circle.r)
+  const line = detectLine(simplified)
+  if (line) return [{ x: line.ax, y: line.ay }, { x: line.bx, y: line.by }]
+  return simplified
+}
+
+function strokePathOn(ctx, pts, w) {
+  if (pts.length < 2) return
+  const N = pts.length
+  const taper = (i) => {
+    const s = N > 1 ? i / (N - 1) : 0
+    return TAPER_MIN + (1 - TAPER_MIN) * Math.sin(Math.PI * s)
+  }
+  if (N === 2) {
+    ctx.beginPath()
+    ctx.lineWidth = w * 0.5 * (taper(0) + taper(1))
+    ctx.moveTo(pts[0].x, pts[0].y)
+    ctx.lineTo(pts[1].x, pts[1].y)
+    ctx.stroke()
+    return
+  }
+  for (let i = 1; i < N - 1; i++) {
+    const mxPrev = i === 1 ? pts[0].x : (pts[i - 1].x + pts[i].x) / 2
+    const myPrev = i === 1 ? pts[0].y : (pts[i - 1].y + pts[i].y) / 2
+    const mx = (pts[i].x + pts[i + 1].x) / 2
+    const my = (pts[i].y + pts[i + 1].y) / 2
+    ctx.beginPath()
+    ctx.lineWidth = w * 0.5 * (taper(i - 1) + taper(i))
+    ctx.moveTo(mxPrev, myPrev)
+    ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my)
+    ctx.stroke()
+  }
+  const last = pts[N - 1]
+  const prevMx = (pts[N - 2].x + last.x) / 2
+  const prevMy = (pts[N - 2].y + last.y) / 2
+  ctx.beginPath()
+  ctx.lineWidth = w * 0.5 * (taper(N - 2) + taper(N - 1))
+  ctx.moveTo(prevMx, prevMy)
+  ctx.lineTo(last.x, last.y)
+  ctx.stroke()
+}
+
 const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserActivity }, ref){
   const videoRef      = useRef(null)
   const drawCanvasRef = useRef(null)
@@ -60,6 +240,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
   const [lockedUI,    setLockedUI]    = useState(false)
   const [brushSizeUI, setBrushSizeUI] = useState(6)
   const [ready,       setReady]       = useState(false)
+  const [polishing,   setPolishing]   = useState(false)
 
   const lines         = useRef([])
   const curPts        = useRef([])
@@ -86,6 +267,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
   const fy            = useRef(new OneEuroFilter(1.0, 0.03))
   const lastGood      = useRef({ x: 0, y: 0, t: 0 })
   const holdCount     = useRef(0)
+  const streamPt      = useRef({ x: 0, y: 0, init: false })
 
   useImperativeHandle(ref, () => ({
     exportImage: () =>
@@ -94,24 +276,49 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         const dc    = drawCanvasRef.current
         if (!dc) return resolve(null)
 
-        const tmp = document.createElement('canvas')
-        tmp.width  = dc.width
-        tmp.height = dc.height
-        const ctx  = tmp.getContext('2d')
+        setPolishing(true)
 
-        if (video && video.readyState >= 2) {
-          ctx.save()
-          ctx.translate(tmp.width, 0)
-          ctx.scale(-1, 1)
-          ctx.globalAlpha = 1
-          ctx.drawImage(video, 0, 0, tmp.width, tmp.height)
-          ctx.restore()
-          ctx.globalAlpha = 1
-        }
+        setTimeout(() => {
+          try {
+            const tmp = document.createElement('canvas')
+            tmp.width  = dc.width
+            tmp.height = dc.height
+            const ctx  = tmp.getContext('2d')
 
-        ctx.drawImage(dc, 0, 0)
+            if (video && video.readyState >= 2) {
+              ctx.save()
+              ctx.translate(tmp.width, 0)
+              ctx.scale(-1, 1)
+              ctx.drawImage(video, 0, 0, tmp.width, tmp.height)
+              ctx.restore()
+            }
 
-        tmp.toBlob((blob) => resolve(blob), 'image/png')
+            ctx.save()
+            if (locked.current) {
+              ctx.translate(actNose.current.x, actNose.current.y)
+              ctx.rotate(actTilt.current - ancTilt.current)
+              ctx.translate(-ancNose.current.x, -ancNose.current.y)
+            }
+            ctx.lineCap = 'round'
+            ctx.lineJoin = 'round'
+            for (const line of lines.current) {
+              const polished = polishStroke(line.points, RDP_EPS_CAPTURE)
+              if (polished.length < 2) continue
+              ctx.strokeStyle = line.color
+              strokePathOn(ctx, polished, line.size || 6)
+            }
+            ctx.restore()
+
+            tmp.toBlob((blob) => {
+              setPolishing(false)
+              resolve(blob)
+            }, 'image/png')
+          } catch (err) {
+            setPolishing(false)
+            console.error('Capture polish error:', err)
+            resolve(null)
+          }
+        }, 16)
       }),
 
     resetSession: () => {
@@ -120,6 +327,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
       undoStack.current = []
       drawing.current   = false
       wasErasing.current = false
+      streamPt.current.init = false
       const dc = drawCanvasRef.current
       if (dc) dc.getContext('2d').clearRect(0, 0, dc.width, dc.height)
     },
@@ -271,8 +479,9 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
       if (action === 'peace') {
         if (drawing.current) {
           drawing.current = false
+          streamPt.current.init = false
           if (curPts.current.length > 0)
-            lines.current.push({ points: [...curPts.current], color: color.current, size: bSize.current })
+            lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
           curPts.current = []
         }
         if (now - lastLock.current > 2000) { toggleLock(); lastLock.current = now }
@@ -388,8 +597,17 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
               undoStack.current.push(JSON.parse(JSON.stringify(lines.current)))
               drawing.current = true
               curPts.current  = []
+              streamPt.current = { x: bx, y: by, init: true }
             }
-            const np = { x: bx, y: by }
+            if (!streamPt.current.init) {
+              streamPt.current.x = bx
+              streamPt.current.y = by
+              streamPt.current.init = true
+            } else {
+              streamPt.current.x += (bx - streamPt.current.x) * STREAMLINE_K
+              streamPt.current.y += (by - streamPt.current.y) * STREAMLINE_K
+            }
+            const np = { x: streamPt.current.x, y: streamPt.current.y }
             if (!curPts.current.length) {
               curPts.current.push(np)
             } else {
@@ -402,8 +620,9 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         } else if (action === 'open') {
           if (drawing.current) {
             drawing.current = false
+            streamPt.current.init = false
             if (curPts.current.length > 0)
-              lines.current.push({ points: [...curPts.current], color: color.current, size: bSize.current })
+              lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
             curPts.current = []
           }
           if (locked.current) {
@@ -445,8 +664,9 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         } else {
           if (drawing.current) {
             drawing.current = false
+            streamPt.current.init = false
             if (curPts.current.length > 0)
-              lines.current.push({ points: [...curPts.current], color: color.current, size: bSize.current })
+              lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
             curPts.current = []
           }
           cur.style.display    = 'block'
@@ -480,8 +700,9 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         hideCursor()
         if (drawing.current) {
           drawing.current = false
+          streamPt.current.init = false
           if (curPts.current.length > 0)
-            lines.current.push({ points: [...curPts.current], color: color.current, size: bSize.current })
+            lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
           curPts.current = []
         }
       }
@@ -495,34 +716,14 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
       }
       drawCtx.lineCap = 'round'; drawCtx.lineJoin = 'round'
 
-      const strokePath = (pts) => {
-        if (pts.length < 2) return
-        drawCtx.beginPath()
-        drawCtx.moveTo(pts[0].x, pts[0].y)
-        if (pts.length === 2) {
-          drawCtx.lineTo(pts[1].x, pts[1].y)
-        } else {
-          for (let i = 1; i < pts.length - 1; i++) {
-            const mx = (pts[i].x + pts[i + 1].x) / 2
-            const my = (pts[i].y + pts[i + 1].y) / 2
-            drawCtx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my)
-          }
-          const last = pts[pts.length - 1]
-          drawCtx.lineTo(last.x, last.y)
-        }
-        drawCtx.stroke()
-      }
-
       lines.current.forEach(line => {
         drawCtx.strokeStyle = line.color
-        drawCtx.lineWidth   = line.size || 6
-        strokePath(line.points)
+        strokePathOn(drawCtx, line.points, line.size || 6)
       })
 
       if (curPts.current.length > 1) {
         drawCtx.strokeStyle = color.current
-        drawCtx.lineWidth   = bSize.current
-        strokePath(curPts.current)
+        strokePathOn(drawCtx, curPts.current, bSize.current)
       }
       drawCtx.restore()
     }
@@ -706,6 +907,19 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         }}>
           <div style={{ fontSize: 48 }}>⏳</div>
           <div>Loading Camera & MediaPipe...</div>
+        </div>
+      )}
+
+      {polishing && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex',
+          alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.65)', zIndex: 60, color: 'white',
+          fontSize: '24px', flexDirection: 'column', gap: '16px',
+          backdropFilter: 'blur(4px)'
+        }}>
+          <div style={{ fontSize: 48 }}>✨</div>
+          <div>Polishing your sketch…</div>
         </div>
       )}
     </div>
