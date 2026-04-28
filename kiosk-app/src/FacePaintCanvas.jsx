@@ -49,7 +49,7 @@ const CW_R = 80
 const PREDICT = 0.65
 const ERASE_R = 30
 
-const STREAMLINE_K        = 0.3
+const STREAMLINE_K        = 0.35
 const TAPER_MIN           = 0.35
 const RDP_EPS_LIVE        = 2
 const RDP_EPS_CAPTURE     = 4
@@ -229,7 +229,8 @@ function strokePathOn(ctx, pts, w) {
   ctx.stroke()
 }
 
-const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserActivity }, ref){
+const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserActivity, onStrokeComplete, onUiAction, mode = 'paint' }, ref){
+  const isChallenge = mode === 'circle'
   const videoRef      = useRef(null)
   const drawCanvasRef = useRef(null)
   const uiCanvasRef   = useRef(null)
@@ -266,8 +267,11 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
   const fx            = useRef(new OneEuroFilter(1.0, 0.03))
   const fy            = useRef(new OneEuroFilter(1.0, 0.03))
   const lastGood      = useRef({ x: 0, y: 0, t: 0 })
-  const holdCount     = useRef(0)
   const streamPt      = useRef({ x: 0, y: 0, init: false })
+  const onStrokeCompleteRef = useRef(onStrokeComplete)
+  onStrokeCompleteRef.current = onStrokeComplete
+  const onUiActionRef = useRef(onUiAction)
+  onUiActionRef.current = onUiAction
 
   useImperativeHandle(ref, () => ({
     exportImage: () =>
@@ -340,6 +344,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
     if (!uc) return
     const ctx = uc.getContext('2d')
     ctx.clearRect(0, 0, uc.width, uc.height)
+    if (isChallenge) return
 
     for (let a = 0; a <= 360; a++) {
       ctx.beginPath()
@@ -365,7 +370,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
     ctx.font = 'bold 16px sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText('🎨 Pick Color', CW_X, CW_Y + CW_R + 30)
-  }, [])
+  }, [isChallenge])
 
   const mapToScreen = useCallback((nx, ny) => {
     const video = videoRef.current
@@ -431,6 +436,14 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
     }
     const hideCursor = () => { cur.style.display = 'none' }
 
+    const finalizeStroke = () => {
+      if (!curPts.current.length) return
+      const simplified = rdp(curPts.current, RDP_EPS_LIVE)
+      lines.current.push({ points: simplified, color: color.current, size: bSize.current })
+      const cb = onStrokeCompleteRef.current
+      if (cb) cb(simplified, color.current, bSize.current)
+    }
+
     const onResults = (results) => {
       let rightFound = false
       let action     = 'hover'
@@ -480,30 +493,33 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         if (drawing.current) {
           drawing.current = false
           streamPt.current.init = false
-          if (curPts.current.length > 0)
-            lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
+          finalizeStroke()
           curPts.current = []
         }
         if (now - lastLock.current > 2000) { toggleLock(); lastLock.current = now }
       }
 
       if (rightFound && rawX !== null) {
-        // Reject brief MediaPipe landmark mislabels. Real hand sweeps stay
-        // under MAX_SPEED; a finger-id swap blows past it for ~100–200 ms.
+        // Velocity-clamp rather than freeze. A single-frame MediaPipe mislabel
+        // jumps out and back: the cursor takes one capped step toward the bad
+        // sample, then one capped step back, netting near zero. Real fast hand
+        // sweeps catch up over a few frames at MAX_SPEED, with no visible
+        // freeze/snap-back artifact.
         const MAX_SPEED = 6000  // px/s
-        const MAX_HOLD  = 12    // frames (~200 ms) before we give up and accept
         const dt = (now - lastGood.current.t) / 1000 || 0.016
-        const dist = Math.hypot(rawX - lastGood.current.x, rawY - lastGood.current.y)
-        const isFirst = lastGood.current.t === 0
+        const dx = rawX - lastGood.current.x
+        const dy = rawY - lastGood.current.y
+        const dist = Math.hypot(dx, dy)
+        const maxStep = MAX_SPEED * dt
         let gx, gy
-        if (isFirst || dist < MAX_SPEED * dt || holdCount.current >= MAX_HOLD) {
+        if (lastGood.current.t === 0 || dist <= maxStep) {
           gx = rawX; gy = rawY
-          lastGood.current = { x: rawX, y: rawY, t: now }
-          holdCount.current = 0
         } else {
-          gx = lastGood.current.x; gy = lastGood.current.y
-          holdCount.current++
+          const ratio = maxStep / dist
+          gx = lastGood.current.x + dx * ratio
+          gy = lastGood.current.y + dy * ratio
         }
+        lastGood.current = { x: gx, y: gy, t: now }
 
         const vx = gx - lastRaw.current.x
         const vy = gy - lastRaw.current.y
@@ -522,7 +538,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         }
 
         const dWheel    = Math.hypot(sx - CW_X, sy - CW_Y)
-        const onWheel   = dWheel <= CW_R
+        const onWheel   = !isChallenge && dWheel <= CW_R
         const rect      = cont?.getBoundingClientRect() || { left: 0, top: 0 }
         const el        = document.elementFromPoint(rect.left + sx, rect.top + sy)
         const onBtn     = el?.closest('.air-btn')
@@ -582,8 +598,12 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
                 } else {
                   console.error("Error: 'onCapture' function is missing!");
                 }
+
+              } else if (onBtn.dataset.action) {
+                const cb = onUiActionRef.current
+                if (cb) cb(onBtn.dataset.action, onBtn)
               }
-              
+
               lastClick.current = now
             }
 
@@ -621,8 +641,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
           if (drawing.current) {
             drawing.current = false
             streamPt.current.init = false
-            if (curPts.current.length > 0)
-              lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
+            finalizeStroke()
             curPts.current = []
           }
           if (locked.current) {
@@ -665,8 +684,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
           if (drawing.current) {
             drawing.current = false
             streamPt.current.init = false
-            if (curPts.current.length > 0)
-              lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
+            finalizeStroke()
             curPts.current = []
           }
           cur.style.display    = 'block'
@@ -701,8 +719,7 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         if (drawing.current) {
           drawing.current = false
           streamPt.current.init = false
-          if (curPts.current.length > 0)
-            lines.current.push({ points: rdp(curPts.current, RDP_EPS_LIVE), color: color.current, size: bSize.current })
+          finalizeStroke()
           curPts.current = []
         }
       }
@@ -839,64 +856,70 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture, onUserA
         boxShadow: '0 0 10px rgba(0,0,0,0.5)', display: 'none'
       }} />
 
-      <div style={{
-        position: 'absolute', top: 20, left: 20,
-        display: 'flex', gap: '10px', zIndex: 20
-      }}>
-        <button className="air-btn" data-action="lock" style={{
-          background: lockedUI ? 'cyan' : 'rgba(0,0,0,0.6)',
-          border: '2px solid cyan', color: lockedUI ? 'black' : 'white',
-          padding: '8px 15px', fontSize: '14px', borderRadius: '20px',
-          fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(5px)',
-          transition: 'transform 0.1s'
-        }}>
-          ✌️ Lock: {lockedUI ? 'ON' : 'OFF'}
-        </button>
-        <button className="air-btn" data-action="undo" style={{
-          background: 'rgba(0,0,0,0.6)', border: '2px solid orange',
-          color: 'white', padding: '8px 15px', fontSize: '14px', borderRadius: '20px',
-          fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(5px)',
-          transition: 'transform 0.1s'
-        }}>
-          ↩️ Undo
-        </button>
-      </div>
-
-      <div style={{
-        position: 'absolute', top: 70, left: 20, zIndex: 20, color: 'white'
-      }}>
+      {!isChallenge && (
         <div style={{
-          background: 'rgba(0,0,0,0.65)', padding: '12px',
-          borderRadius: '12px', backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          lineHeight: '1.5', fontSize: '13px'
+          position: 'absolute', top: 20, left: 20,
+          display: 'flex', gap: '10px', zIndex: 20
         }}>
-          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: '16px' }}>Air Canvas ✏️</h3>
-          <div>🎯 <b>Left Index:</b> Cursor</div>
-          <div>🤏 <b>Right Pinch:</b> Draw / Click</div>
-          <div>✋ <b>Right Palm:</b> Swipe to Erase</div>
-          <div>✌️ <b>Peace Sign:</b> Lock Canvas</div>
-          <div>↩️ <b>Undo:</b> Hover + Pinch</div>
-          <div>🎨 <b>Color Wheel:</b> Pinch to Pick</div>
-        </div>
-      </div>
-
-      <div style={{
-        position: 'absolute', top: 260, left: 20,
-        display: 'flex', gap: '8px', zIndex: 20
-      }}>
-        {[3, 6, 12].map(sz => (
-          <button key={sz} className="air-btn" data-size={sz} style={{
-            background: 'rgba(0,0,0,0.6)',
-            border: `2px solid ${brushSizeUI === sz ? '#00ff00' : 'white'}`,
-            color: 'white', padding: '6px 12px', borderRadius: '20px',
-            fontSize: '13px', fontWeight: 'bold', cursor: 'pointer',
-            backdropFilter: 'blur(5px)', transition: 'transform 0.1s, border-color 0.2s'
+          <button className="air-btn" data-action="lock" style={{
+            background: lockedUI ? 'cyan' : 'rgba(0,0,0,0.6)',
+            border: '2px solid cyan', color: lockedUI ? 'black' : 'white',
+            padding: '8px 15px', fontSize: '14px', borderRadius: '20px',
+            fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(5px)',
+            transition: 'transform 0.1s'
           }}>
-            🖌️ {sz === 3 ? 'Small' : sz === 6 ? 'Medium' : 'Large'}
+            ✌️ Lock: {lockedUI ? 'ON' : 'OFF'}
           </button>
-        ))}
-      </div>
+          <button className="air-btn" data-action="undo" style={{
+            background: 'rgba(0,0,0,0.6)', border: '2px solid orange',
+            color: 'white', padding: '8px 15px', fontSize: '14px', borderRadius: '20px',
+            fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(5px)',
+            transition: 'transform 0.1s'
+          }}>
+            ↩️ Undo
+          </button>
+        </div>
+      )}
+
+      {!isChallenge && (
+        <div style={{
+          position: 'absolute', top: 70, left: 20, zIndex: 20, color: 'white'
+        }}>
+          <div style={{
+            background: 'rgba(0,0,0,0.65)', padding: '12px',
+            borderRadius: '12px', backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            lineHeight: '1.5', fontSize: '13px'
+          }}>
+            <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: '16px' }}>Air Canvas ✏️</h3>
+            <div>🎯 <b>Left Index:</b> Cursor</div>
+            <div>🤏 <b>Right Pinch:</b> Draw / Click</div>
+            <div>✋ <b>Right Palm:</b> Swipe to Erase</div>
+            <div>✌️ <b>Peace Sign:</b> Lock Canvas</div>
+            <div>↩️ <b>Undo:</b> Hover + Pinch</div>
+            <div>🎨 <b>Color Wheel:</b> Pinch to Pick</div>
+          </div>
+        </div>
+      )}
+
+      {!isChallenge && (
+        <div style={{
+          position: 'absolute', top: 260, left: 20,
+          display: 'flex', gap: '8px', zIndex: 20
+        }}>
+          {[3, 6, 12].map(sz => (
+            <button key={sz} className="air-btn" data-size={sz} style={{
+              background: 'rgba(0,0,0,0.6)',
+              border: `2px solid ${brushSizeUI === sz ? '#00ff00' : 'white'}`,
+              color: 'white', padding: '6px 12px', borderRadius: '20px',
+              fontSize: '13px', fontWeight: 'bold', cursor: 'pointer',
+              backdropFilter: 'blur(5px)', transition: 'transform 0.1s, border-color 0.2s'
+            }}>
+              🖌️ {sz === 3 ? 'Small' : sz === 6 ? 'Medium' : 'Large'}
+            </button>
+          ))}
+        </div>
+      )}
 
       {!ready && (
         <div style={{
