@@ -49,13 +49,13 @@ const CW_R = 80
 const PREDICT = 0.65
 const ERASE_R = 30
 
-const STREAMLINE_K        = 0.35
+const STREAMLINE_K        = 0.4
 const TAPER_MIN           = 0.35
 const RDP_EPS_LIVE        = 2
-const RDP_EPS_CAPTURE     = 4
+const RDP_EPS_CAPTURE     = 5
 const SHAPE_CIRCLE_THRESH = 0.9
 const SHAPE_LINE_THRESH   = 0.02
-const SHAPE_RADIUS_CV     = 0.18
+const SHAPE_RADIUS_CV     = 0.15
 const SHAPE_MIN_POINTS    = 8
 const SHAPE_MIN_LENGTH    = 80
 
